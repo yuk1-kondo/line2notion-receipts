@@ -278,6 +278,10 @@ def create_item_row(
     if r.status_code != 200:
         print(f"Notion Items API Error: {r.status_code} - {r.text}")
     r.raise_for_status()
+    try:
+        return r.json().get("id", "")
+    except Exception:
+        return ""
 
 
 def ocr_bytes_to_text(image_bytes: bytes) -> str:
@@ -578,6 +582,7 @@ def handle_image(event):
 
     created = 0
     low_conf_count = 0
+    failed = 0
     for name, price_str in items:
         try:
             price = float(str(price_str).replace("¥", "").replace(",", "").strip())
@@ -587,23 +592,30 @@ def handle_image(event):
         category, confidence, source = classify_category(store_name, name, price)
         if confidence < 0.6:
             low_conf_count += 1
-        create_item_row(
-            product_name=name,
-            price=price,
-            purchase_date=purchase_date,
-            store_name=store_name,
-            category=category,
-            confidence=confidence,
-            source=source,
-            receipt_page_id=receipt_page_id,
-            receipt_id=receipt_id,
-        )
-        created += 1
+        try:
+            page_id = create_item_row(
+                product_name=name,
+                price=price,
+                purchase_date=purchase_date,
+                store_name=store_name,
+                category=category,
+                confidence=confidence,
+                source=source,
+                receipt_page_id=receipt_page_id,
+                receipt_id=receipt_id,
+            )
+            if page_id:
+                created += 1
+            else:
+                failed += 1
+        except Exception as e:
+            print(f"create_item_row failed: {e}")
+            failed += 1
 
     # 6) LINEへ返信（サマリ）
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text=f"{purchase_date}｜{store_name}\n登録: {created}件（低信頼: {low_conf_count}）\nレシートID: {receipt_id[-8:]}"),
+        TextSendMessage(text=f"{purchase_date}｜{store_name}\n登録: {created}件（低信頼: {low_conf_count}／失敗: {failed}）\nレシートID: {receipt_id[-8:]}"),
     )
 
 
